@@ -59,3 +59,39 @@ $pred(v) = \{w \in V \| (v,w) \in E \}$
 **Live-out**: The set of variables that are live on any outgoing edge.
 
 How to compute live-in and live-out? *Data-flow analysis*.
+
+### Data-flow equations
+
+*in*$(v)$ = *use*$(v)$ union the (*out*$(v)$ - *def*$(v)$)
+
+*out*$(v)$ = the union of all *in*$(w)$ where $w \in $ *succ*$(v)$
+
+### Liveness analysis algorithm
+
+```
+for each v in V
+    out[v] = empty
+    in[v] = empty
+
+while(true)
+    for each v in V
+        // save live-out/in sets
+        out'[v] = out[v]
+        in'[v] = in[v]
+
+        out[v] = union of all in[w] for w in succ(v)
+        in[v] = use(v) union (out[v] - def(v))
+
+    if, for all v in V, out'[v] == out[v] and in'[v] == in[v] then
+        break
+```
+
+Order does not matter for correctness, but for performance, compute in reverse direction of data-flow.
+
+v3:
+in = x,y,n
+out = x,y,n
+
+v4:
+in = y
+out = empty
