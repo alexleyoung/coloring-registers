@@ -51,6 +51,11 @@ def scan_source(source: str) -> list[Instruction]:
     instructions = []
 
     for line in lines:
+        line = line.strip()
+        # ensure line not empty
+        if not line:
+            continue
+
         if "if" in line:
             cond = re.search(r"\((.*?)\)", line)
             if not cond:
@@ -153,6 +158,7 @@ def main():
         if (x < n) goto body
         goto end
         body:
+
         z = x * 2 + y
         x = x + 1
         y = x + z

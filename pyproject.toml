@@ -1,7 +1,7 @@
 [project]
 name = "coloring-registers"
 version = "0.1.0"
-description = "Add your description here"
+description = "simulation for register allocation via graph coloring"
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = []
