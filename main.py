@@ -47,7 +47,34 @@ class CFG:
 
 ### scan source psuedo-code into [Instruction]s
 def scan_source(source: str) -> list[Instruction]:
+    lines = source.split("\n")
     instructions = []
+
+    for i in range(len(lines)):
+        line = lines[i]
+        if "if" in line:
+            cond = re.search(r"\((.*?)\)", line)
+            if not cond:
+                raise Exception("no condition in if")
+            target = line[line.find("goto ") + 5 :].strip()
+            instructions.append(IfGoto(cond.group(1), target))
+        elif "goto" in line:
+            target = line[line.find("goto ") + 5 :].strip()
+            instructions.append(Goto(target))
+        elif "return" in line:
+            val = line[line.find("return ") + 7 :].strip()
+            instructions.append(Return(val))
+        elif "=" in line:
+            parts = line.split("=")
+            dest = parts[0].strip()
+            expr = parts[1].strip()
+            instructions.append(Assign(dest, expr))
+        elif ":" in line:
+            label_name = line[: line.find(":")].strip()
+            instructions.append(Label(label_name))
+        else:
+            raise Exception(f"Failed to parse line: {line}")
+
     return instructions
 
 
