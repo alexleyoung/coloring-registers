@@ -50,8 +50,7 @@ def scan_source(source: str) -> list[Instruction]:
     lines = source.split("\n")
     instructions = []
 
-    for i in range(len(lines)):
-        line = lines[i]
+    for line in lines:
         if "if" in line:
             cond = re.search(r"\((.*?)\)", line)
             if not cond:
@@ -78,16 +77,70 @@ def scan_source(source: str) -> list[Instruction]:
     return instructions
 
 
+### helper which finds "leaders", instructions which start new basic blocks
+def find_leaders(instructions: list[Instruction]) -> list[int]:
+    # first instruction is always a leader, since control flow starts there
+    leaders = {0}
+
+    for i, instr in enumerate(instructions):
+        match instr:
+            # labels are jump targets, so they start new blocks
+            case Label(_):
+                leaders.add(i)
+            # jumps break control flow, so the following instruction must be a leader
+            case Goto(_) | IfGoto(_, _) | Return(_):
+                if i + 1 < len(instructions):
+                    leaders.add(i + 1)
+
+    return list(leaders)
+
+
 ### parse instructions into blocks
 def parse_blocks(instructions: list[Instruction]) -> list[BasicBlock]:
     blocks = []
+    leaders = sorted(find_leaders(instructions))
+
+    for i in range(len(leaders)):
+        if i == len(leaders) - 1:
+            blocks.append(BasicBlock(instructions[leaders[i] :]))
+        else:
+            blocks.append(BasicBlock(instructions[leaders[i] : leaders[i + 1]]))
+
     return blocks
+
+
+### helper to find block with [label] as the first instruction
+def find_label_block(blocks: list[BasicBlock], label: str) -> int:
+    for i, block in enumerate(blocks):
+        match block.instructions[0]:
+            # non-control block
+            case Label(name):
+                if name == label:
+                    return i
+
+    raise Exception(f"label '{label}' does not exist")
 
 
 ### generate adjacency matrix from basic blocks
 def parse_edges(blocks: list[BasicBlock]) -> list[list[int]]:
     n = len(blocks)
     edges = [[0 for _ in range(n)] for _ in range(n)]
+    for i, block in enumerate(blocks):
+        match block.instructions[-1]:
+            # non-control block
+            case Assign(_, _):
+                if i < len(blocks) - 1:
+                    edges[i][i + 1] = 1
+            # jump only directs to label block
+            case Goto(label):
+                edges[i][find_label_block(blocks, label)] = 1
+            # if go to can go to label block or next block
+            case IfGoto(_, label):
+                if i < len(blocks) - 1:
+                    edges[i][i + 1] = 1
+                edges[i][find_label_block(blocks, label)] = 1
+            # NOTE: if label or return is last instruction, no-op
+
     return edges
 
 
