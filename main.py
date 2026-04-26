@@ -37,12 +37,64 @@ class BasicBlock:
     instructions: list[Instruction]
 
 
-@dataclass
 class CFG:
     blocks: list[BasicBlock]
-
-    # adjacency list of block indcies from [self.blocks]
     edges: list[list[int]]
+
+    # maps for helper functions
+    # list (indexed by vertex #) of corresponding sets
+    _pred: list[list[int]]
+    _succ: list[list[int]]
+    _def: list[set[str]]
+    _use: list[set[str]]
+
+    def __init__(self, blocks: list[BasicBlock], edges: list[list[int]]):
+        self.blocks = blocks
+        self.edges = edges
+
+        # populate pred/succ mapas
+        n = len(blocks)
+        self._pred = [[] for _ in range(n)]
+        self._succ = [[] for _ in range(n)]
+        for i in range(n):
+            for j in range(n):
+                if edges[i][j]:
+                    self._succ[i].append(j)
+                    self._pred[j].append(i)
+
+        # init defined and use sets for each block
+        self._def = [set() for _ in range(n)]
+        self._use = [set() for _ in range(n)]
+
+        # helper to parse expressions for variables
+        def extract_uses(i: int, expr: str):
+            for symbol in expr.split():
+                if symbol.isidentifier() and symbol not in self._def[i]:
+                    self._use[i].add(symbol)
+
+        # iterate through every block and instruction and check variable occurences
+        for i, block in enumerate(blocks):
+            for instr in block.instructions:
+                match instr:
+                    case Assign(dest, expr):
+                        extract_uses(i, expr)
+                        self._def[i].add(dest)
+                    case IfGoto(cond, _):
+                        extract_uses(i, cond)
+                    case Return(expr):
+                        extract_uses(i, expr)
+
+    def pred(self, v: int) -> list[int]:
+        return self._pred[v]
+
+    def succ(self, v: int) -> list[int]:
+        return self._succ[v]
+
+    def defs(self, v: int) -> set[str]:
+        return self._def[v]
+
+    def use(self, v: int) -> set[str]:
+        return self._use[v]
 
 
 ### scan source psuedo-code into [Instruction]s
@@ -150,6 +202,8 @@ def parse_edges(blocks: list[BasicBlock]) -> list[list[int]]:
 
 
 def main():
+    # note, expressions must have spaces delimiting symbols because my parser is lazy
+    # furthermore, only simple arithmetic operations are allowed (+, -, *, /) for the same reason
     pseudo_code = """
         z = 10
         x = 0
