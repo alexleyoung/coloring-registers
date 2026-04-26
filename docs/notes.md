@@ -48,6 +48,9 @@ $pred(v) = \{w \in V \| (v,w) \in E \}$
 
 *use* is a function which returns the set of variables *used* in a given block of a CFG.
 
+> precisely defined, _use_ of a vertex $v$ is the set of variables that are used in a block _before potential
+> redefinition_.
+
 ### Live-in & Live-out
 
 **Live variable**: A variable is **live** if it contains a value that *may* be used in the future.
@@ -95,3 +98,8 @@ out = x,y,n
 v4:
 in = y
 out = empty
+
+### Interference Graph
+
+Liveness-analysis on a CFG allows us to build an Interference Graph, representing when to variables _interfere_ with
+each other because they are live at the same time (or some special case).
