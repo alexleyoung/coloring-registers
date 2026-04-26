@@ -133,6 +133,15 @@ def parse_edges(blocks: list[BasicBlock]) -> list[list[int]]:
     return edges
 
 
+def parse_expr_vars(expr: str) -> set[str]:
+    vars = set()
+    symbols = expr.split(" ")
+    for symbol in symbols:
+        if symbol.isidentifier():
+            vars.add(symbol)
+    return vars
+
+
 class CFG:
     blocks: list[BasicBlock]
     edges: list[list[int]]
@@ -166,9 +175,10 @@ class CFG:
     ### populate def and use by scanning each block's instructions
     def _build_def_use(self):
         def extract_uses(i: int, expr: str):
-            for symbol in expr.split():
-                if symbol.isidentifier() and symbol not in self._def[i]:
-                    self._use[i].add(symbol)
+            vars = parse_expr_vars(expr)
+            for var in vars:
+                if var not in self._def[i]:
+                    self._use[i].add(var)
 
         for i, block in enumerate(self.blocks):
             for instr in block.instructions:
@@ -210,14 +220,49 @@ class CFG:
     def use(self, v: int) -> set[str]:
         return self._use[v]
 
+    def live_in(self, v: int) -> set[str]:
+        return self._live_in[v]
+
+    def live_out(self, v: int) -> set[str]:
+        return self._live_out[v]
+
 
 # Interference Graph class with variables as vertices and edges as interference
 class IG:
+    _cfg: CFG
     variables: set[str]
-    interference: dict[str, list[str]]
+    interference: dict[str, set[str]]
 
     def __init__(self, cfg: CFG):
-        pass
+        self._cfg = cfg
+        self.variables = set()
+        self.interference = {}
+
+    def _get_variables(self):
+        for block in self._cfg.blocks:
+            for instr in block.instructions:
+                match instr:
+                    case Assign(dest, expr):
+                        self.variables.add(dest)
+                        self.variables |= parse_expr_vars(expr)
+                    case IfGoto(cond, _):
+                        self.variables |= parse_expr_vars(cond)
+                    case Return(expr):
+                        self.variables |= parse_expr_vars(expr)
+
+        # instantiate edge map with vertices
+        for a in self.variables:
+            self.interference[a] = set()
+
+    def _get_interferences(self):
+        for v, _ in enumerate(self._cfg.blocks):
+            defs = self._cfg.defi(v)
+            for a in defs:
+                outs = self._cfg.live_out(v)
+                for b in outs:
+                    if a != b:
+                        self.interference[a].add(b)
+                        self.interference[b].add(a)
 
 
 def main():
@@ -248,6 +293,10 @@ def main():
     cfg._build_pred_succ()
     cfg._build_def_use()
     cfg._liveness_analysis()
+
+    ig = IG(cfg)
+    ig._get_variables()
+    ig._get_interferences()
 
 
 if __name__ == "__main__":
