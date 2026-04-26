@@ -103,3 +103,14 @@ out = empty
 
 Liveness-analysis on a CFG allows us to build an Interference Graph, representing when to variables _interfere_ with
 each other because they are live at the same time (or some special case).
+
+To construct the Interference Graph,
+
+```
+Given CFG $G$,
+1. for each variable $x \in X(G)$, create a new vertex in IG
+2. for each vertex $v \in V(G)$:
+    for each $a \in def(v)$:
+        for each $b \in out(v)$:
+            add edge [a,b]
+```
