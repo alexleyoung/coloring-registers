@@ -37,66 +37,6 @@ class BasicBlock:
     instructions: list[Instruction]
 
 
-class CFG:
-    blocks: list[BasicBlock]
-    edges: list[list[int]]
-
-    # maps for helper functions
-    # list (indexed by vertex #) of corresponding sets
-    _pred: list[list[int]]
-    _succ: list[list[int]]
-    _def: list[set[str]]
-    _use: list[set[str]]
-
-    def __init__(self, blocks: list[BasicBlock], edges: list[list[int]]):
-        self.blocks = blocks
-        self.edges = edges
-
-        # populate pred/succ mapas
-        n = len(blocks)
-        self._pred = [[] for _ in range(n)]
-        self._succ = [[] for _ in range(n)]
-        for i in range(n):
-            for j in range(n):
-                if edges[i][j]:
-                    self._succ[i].append(j)
-                    self._pred[j].append(i)
-
-        # init defined and use sets for each block
-        self._def = [set() for _ in range(n)]
-        self._use = [set() for _ in range(n)]
-
-        # helper to parse expressions for variables
-        def extract_uses(i: int, expr: str):
-            for symbol in expr.split():
-                if symbol.isidentifier() and symbol not in self._def[i]:
-                    self._use[i].add(symbol)
-
-        # iterate through every block and instruction and check variable occurences
-        for i, block in enumerate(blocks):
-            for instr in block.instructions:
-                match instr:
-                    case Assign(dest, expr):
-                        extract_uses(i, expr)
-                        self._def[i].add(dest)
-                    case IfGoto(cond, _):
-                        extract_uses(i, cond)
-                    case Return(expr):
-                        extract_uses(i, expr)
-
-    def pred(self, v: int) -> list[int]:
-        return self._pred[v]
-
-    def succ(self, v: int) -> list[int]:
-        return self._succ[v]
-
-    def defs(self, v: int) -> set[str]:
-        return self._def[v]
-
-    def use(self, v: int) -> set[str]:
-        return self._use[v]
-
-
 ### scan source psuedo-code into [Instruction]s
 def scan_source(source: str) -> list[Instruction]:
     lines = source.split("\n")
@@ -104,7 +44,6 @@ def scan_source(source: str) -> list[Instruction]:
 
     for line in lines:
         line = line.strip()
-        # ensure line not empty
         if not line:
             continue
 
@@ -136,15 +75,12 @@ def scan_source(source: str) -> list[Instruction]:
 
 ### helper which finds "leaders", instructions which start new basic blocks
 def find_leaders(instructions: list[Instruction]) -> list[int]:
-    # first instruction is always a leader, since control flow starts there
     leaders = {0}
 
     for i, instr in enumerate(instructions):
         match instr:
-            # labels are jump targets, so they start new blocks
             case Label(_):
                 leaders.add(i)
-            # jumps break control flow, so the following instruction must be a leader
             case Goto(_) | IfGoto(_, _) | Return(_):
                 if i + 1 < len(instructions):
                     leaders.add(i + 1)
@@ -170,7 +106,6 @@ def parse_blocks(instructions: list[Instruction]) -> list[BasicBlock]:
 def find_label_block(blocks: list[BasicBlock], label: str) -> int:
     for i, block in enumerate(blocks):
         match block.instructions[0]:
-            # non-control block
             case Label(name):
                 if name == label:
                     return i
@@ -184,14 +119,11 @@ def parse_edges(blocks: list[BasicBlock]) -> list[list[int]]:
     edges = [[0 for _ in range(n)] for _ in range(n)]
     for i, block in enumerate(blocks):
         match block.instructions[-1]:
-            # non-control block
             case Assign(_, _):
                 if i < len(blocks) - 1:
                     edges[i][i + 1] = 1
-            # jump only directs to label block
             case Goto(label):
                 edges[i][find_label_block(blocks, label)] = 1
-            # if go to can go to label block or next block
             case IfGoto(_, label):
                 if i < len(blocks) - 1:
                     edges[i][i + 1] = 1
@@ -199,6 +131,93 @@ def parse_edges(blocks: list[BasicBlock]) -> list[list[int]]:
             # NOTE: if label or return is last instruction, no-op
 
     return edges
+
+
+class CFG:
+    blocks: list[BasicBlock]
+    edges: list[list[int]]
+
+    _pred: list[set[int]]
+    _succ: list[set[int]]
+    _def: list[set[str]]
+    _use: list[set[str]]
+    _live_in: list[set[str]]
+    _live_out: list[set[str]]
+
+    def __init__(self, blocks: list[BasicBlock], edges: list[list[int]]):
+        self.blocks = blocks
+        self.edges = edges
+        n = len(blocks)
+        self._pred = [set() for _ in range(n)]
+        self._succ = [set() for _ in range(n)]
+        self._def = [set() for _ in range(n)]
+        self._use = [set() for _ in range(n)]
+        self._live_in = [set() for _ in range(n)]
+        self._live_out = [set() for _ in range(n)]
+
+    ### populate pred and succ from the adjacency matrix
+    def _build_pred_succ(self):
+        for i in range(len(self.blocks)):
+            for j in range(len(self.blocks)):
+                if self.edges[i][j]:
+                    self._succ[i].add(j)
+                    self._pred[j].add(i)
+
+    ### populate def and use by scanning each block's instructions
+    def _build_def_use(self):
+        def extract_uses(i: int, expr: str):
+            for symbol in expr.split():
+                if symbol.isidentifier() and symbol not in self._def[i]:
+                    self._use[i].add(symbol)
+
+        for i, block in enumerate(self.blocks):
+            for instr in block.instructions:
+                match instr:
+                    case Assign(dest, expr):
+                        extract_uses(i, expr)
+                        self._def[i].add(dest)
+                    case IfGoto(cond, _):
+                        extract_uses(i, cond)
+                    case Return(expr):
+                        extract_uses(i, expr)
+
+    ### iteratively compute live-in and live-out for each block until convergence
+    def _liveness_analysis(self):
+        while True:
+            old_out = [s.copy() for s in self._live_out]
+            old_in = [s.copy() for s in self._live_in]
+
+            for v, _ in enumerate(self.blocks):
+                # out[v] = union of all in[w] for w in succ(v)
+                for w in self.succ(v):
+                    self._live_out[v] |= self._live_in[w]
+
+                # in[v] = use(v) union (out[v] - def(v))
+                self._live_in[v] = self.use(v) | (self._live_out[v] - self.defi(v))
+
+            if old_out == self._live_out and old_in == self._live_in:
+                break
+
+    def pred(self, v: int) -> set[int]:
+        return self._pred[v]
+
+    def succ(self, v: int) -> set[int]:
+        return self._succ[v]
+
+    def defi(self, v: int) -> set[str]:
+        return self._def[v]
+
+    def use(self, v: int) -> set[str]:
+        return self._use[v]
+
+
+# Interference Graph class with variables as vertices and edges as interference
+class IG:
+    variables: set[str]
+    interference: dict[str, list[str]]
+
+    def __init__(self, cfg: CFG):
+        pass
 
 
 def main():
@@ -226,6 +245,9 @@ def main():
     edges = parse_edges(blocks)
 
     cfg = CFG(blocks, edges)
+    cfg._build_pred_succ()
+    cfg._build_def_use()
+    cfg._liveness_analysis()
 
 
 if __name__ == "__main__":
