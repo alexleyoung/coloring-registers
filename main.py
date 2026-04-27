@@ -152,6 +152,8 @@ class CFG:
     _use: list[set[str]]
     _live_in: list[set[str]]
     _live_out: list[set[str]]
+    # instruction-level liveness: for each block, a list of live sets per instruction (bottom-up)
+    _instr_live: list[list[set[str]]]
 
     def __init__(self, blocks: list[BasicBlock], edges: list[list[int]]):
         self.blocks = blocks
@@ -163,6 +165,7 @@ class CFG:
         self._use = [set() for _ in range(n)]
         self._live_in = [set() for _ in range(n)]
         self._live_out = [set() for _ in range(n)]
+        self._instr_live = [[] for _ in range(n)]
 
     ### populate pred and succ from the adjacency matrix
     def _build_pred_succ(self):
@@ -208,6 +211,22 @@ class CFG:
             if old_out == self._live_out and old_in == self._live_in:
                 break
 
+    ### compute live set at each instruction by propagating live_out backwards through the block
+    def _instr_liveness_analysis(self):
+        for v, block in enumerate(self.blocks):
+            live = self._live_out[v].copy()
+            instr_live = []
+            for instr in reversed(block.instructions):
+                instr_live.append(live.copy())
+                match instr:
+                    case Assign(dest, expr):
+                        live = (live - {dest}) | parse_expr_vars(expr)
+                    case IfGoto(cond, _):
+                        live |= parse_expr_vars(cond)
+                    case Return(expr):
+                        live |= parse_expr_vars(expr)
+            self._instr_live[v] = list(reversed(instr_live))
+
     def pred(self, v: int) -> set[int]:
         return self._pred[v]
 
@@ -225,6 +244,9 @@ class CFG:
 
     def live_out(self, v: int) -> set[str]:
         return self._live_out[v]
+
+    def instr_live(self, v: int) -> list[set[str]]:
+        return self._instr_live[v]
 
 
 # Interference Graph class with variables as vertices and edges as interference
@@ -255,14 +277,14 @@ class IG:
             self.interference[a] = set()
 
     def _get_interferences(self):
-        for v, _ in enumerate(self._cfg.blocks):
-            defs = self._cfg.defi(v)
-            for a in defs:
-                outs = self._cfg.live_out(v)
-                for b in outs:
-                    if a != b:
-                        self.interference[a].add(b)
-                        self.interference[b].add(a)
+        for v, block in enumerate(self._cfg.blocks):
+            for i, instr in enumerate(block.instructions):
+                match instr:
+                    case Assign(dest, _):
+                        for b in self._cfg.instr_live(v)[i]:
+                            if dest != b:
+                                self.interference[dest].add(b)
+                                self.interference[b].add(dest)
 
 
 def main():
@@ -276,7 +298,6 @@ def main():
         if (x < n) goto body
         goto end
         body:
-
         z = x * 2 + y
         x = x + 1
         y = x + z
@@ -293,10 +314,23 @@ def main():
     cfg._build_pred_succ()
     cfg._build_def_use()
     cfg._liveness_analysis()
+    cfg._instr_liveness_analysis()
 
     ig = IG(cfg)
     ig._get_variables()
     ig._get_interferences()
+
+    # greedy coloring!!!
+    colors = {a: 0 for a in ig.variables}  # 0 = uncolored
+    for a in ig.variables:
+        # get set of colors we are neighboring
+        neighbor_colors = {colors[x] for x in ig.interference[a]}
+
+        # pick the lowest number (color) not in neighbor_colors
+        i = 1
+        while i in neighbor_colors:
+            i += 1
+        colors[a] = i
 
 
 if __name__ == "__main__":
