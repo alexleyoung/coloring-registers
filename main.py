@@ -200,7 +200,7 @@ class CFG:
             old_out = [s.copy() for s in self._live_out]
             old_in = [s.copy() for s in self._live_in]
 
-            for v, _ in enumerate(self.blocks):
+            for v, _ in enumerate(reversed(self.blocks)):
                 # out[v] = union of all in[w] for w in succ(v)
                 for w in self.succ(v):
                     self._live_out[v] |= self._live_in[w]
